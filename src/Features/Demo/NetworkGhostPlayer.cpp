@@ -42,7 +42,6 @@ public:
 	void StartCountdown() {
 		if (!this->active) return;
 		if (this->countdownEnd) return;
-		console->Print("countding\n");
 		if (ghost_sync_countdown.GetFloat() == 0) {
 			this->active = false;
 			if (engine->shouldPauseForSync) {
@@ -816,7 +815,7 @@ void NetworkManager::Treat(sf::Packet &packet, bool udp) {
 				}
 
 				if (ghost_sync.GetBool()) {
-					if (this->AreAllGhostsAheadOrSameMap()) { //free to pass during hide and seek because it checks for active
+					if (this->AreAllGhostsAheadOrSameMap()) {
 						syncUi.StartCountdown();
 					}
 				}
@@ -961,13 +960,13 @@ void NetworkManager::Treat(sf::Packet &packet, bool udp) {
 					this->UpdateColor();
 					break;
 				case STATE::HIDER:
-					engine->ExecuteCommand("ghost_draw_through_walls 0");
+					engine->ExecuteCommand("ghost_draw_through_walls 2");
 					toastHud.AddToast(GHOST_TOAST_TAG, "You're a hider!");
 					GhostEntity::set_color = {0, 255, 4, 255};
 					this->UpdateColor();
 					break;
 				case STATE::TAGGED:
-					engine->ExecuteCommand("ghost_draw_through_walls 2; ghost_proximity_fade 0");
+					engine->ExecuteCommand("ghost_draw_through_walls 2");
 					toastHud.AddToast(GHOST_TOAST_TAG, "You're a spectator!");
 					GhostEntity::set_color = {255, 255, 255, 255};
 					this->UpdateColor();
