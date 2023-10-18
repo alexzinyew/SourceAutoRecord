@@ -42,6 +42,7 @@ public:
 	void StartCountdown() {
 		if (!this->active) return;
 		if (this->countdownEnd) return;
+		console->Print("countding\n");
 		if (ghost_sync_countdown.GetFloat() == 0) {
 			this->active = false;
 			if (engine->shouldPauseForSync) {
@@ -232,6 +233,19 @@ sf::Packet &operator>>(sf::Packet &packet, Vector &vec) {
 
 sf::Packet &operator<<(sf::Packet &packet, const Vector &vec) {
 	return packet << vec.x << vec.y << vec.z;
+}
+
+// STATE
+
+sf::Packet &operator>>(sf::Packet &packet, STATE &header) {
+	sf::Uint8 tmp;
+	packet >> tmp;
+	header = static_cast<STATE>(tmp);
+	return packet;
+}
+
+sf::Packet &operator<<(sf::Packet &packet, const STATE &state) {
+	return packet << static_cast<sf::Uint8>(state);
 }
 
 // The view offset is packed into 7 bits; this is fine as it should
@@ -432,6 +446,8 @@ void NetworkManager::Disconnect() {
 		Scheduler::OnMainThread([=]() {
 			toastHud.AddToast(GHOST_TOAST_TAG, "You have been disconnected");
 		});
+
+		this->EndHideAndSeek();
 	}
 }
 
@@ -800,7 +816,7 @@ void NetworkManager::Treat(sf::Packet &packet, bool udp) {
 				}
 
 				if (ghost_sync.GetBool()) {
-					if (this->AreAllGhostsAheadOrSameMap()) {
+					if (this->AreAllGhostsAheadOrSameMap()) { //free to pass during hide and seek because it checks for active
 						syncUi.StartCountdown();
 					}
 				}
@@ -924,6 +940,68 @@ void NetworkManager::Treat(sf::Packet &packet, bool udp) {
 		}
 		break;
 	}
+	case HEADER::UPDATE_STATES: {
+		uint32_t clients;
+		packet >> clients;
+		for (size_t i = 0; i < clients; ++i) {
+			uint32_t id;
+			STATE state;
+			packet >> id >> state;
+
+			if (id == this->ID && state != this->state) {
+				this->state = state;
+				switch (state) {
+				case STATE::NONE:
+					engine->ExecuteCommand("ghost_draw_through_walls 2");
+					break;
+				case STATE::SEEKER:
+					engine->ExecuteCommand("ghost_draw_through_walls 0");
+					toastHud.AddToast(GHOST_TOAST_TAG, "You're a seeker!");
+					GhostEntity::set_color = {255, 0, 0, 255};
+					this->UpdateColor();
+					break;
+				case STATE::HIDER:
+					engine->ExecuteCommand("ghost_draw_through_walls 0");
+					toastHud.AddToast(GHOST_TOAST_TAG, "You're a hider!");
+					GhostEntity::set_color = {0, 255, 4, 255};
+					this->UpdateColor();
+					break;
+				case STATE::TAGGED:
+					engine->ExecuteCommand("ghost_draw_through_walls 2; ghost_proximity_fade 0");
+					toastHud.AddToast(GHOST_TOAST_TAG, "You're a spectator!");
+					GhostEntity::set_color = {255, 255, 255, 255};
+					this->UpdateColor();
+					break;
+				default:
+					break;
+				}
+			} else {
+				auto ghost = this->GetGhostByID(id);
+				if (!ghost) continue;
+				ghost->state = state;
+			}
+		}
+		break;
+	}
+	case HEADER::START_HIDEANDSEEK: {
+		ghost_sync.SetValue(true);
+		this->countdownShow = false;
+
+		std::string map;
+		uint32_t time;
+		packet >> map >> time;
+
+		ghost_sync_countdown.SetValue(this->state == STATE::SEEKER ? int(time) : 0);
+		engine->ExecuteCommand(Utils::ssprintf("map %s", map.c_str()).c_str());
+		this->hideAndSeekMap = map;
+		this->mustWait = true;
+
+		break;
+	}
+	case HEADER::END_HIDEANDSEEK: {
+		this->EndHideAndSeek();
+		break;
+	}
 	default:
 		break;
 	}
@@ -988,13 +1066,16 @@ void NetworkManager::UpdateColor() {
 }
 
 bool NetworkManager::AreAllGhostsAheadOrSameMap() {
+	//if (this->state != STATE::NONE && engine->GetCurrentMapName() != this->hideAndSeekMap) // sync ui will not be active 
+	//	return false;
+
 	this->ghostPoolLock.lock();
 	syncUi.ready.clear();
 	syncUi.waiting.clear();
 	bool allReady = true;
 	for (auto ghost : this->ghostPool) {
 		if (ghost->spectator) continue;
-		if (!ghost->isAhead && !ghost->sameMap) {
+		if (this->state == STATE::NONE ? !ghost->isAhead && !ghost->sameMap : !ghost->sameMap) {
 			syncUi.waiting.push_back(ghost->ID);
 			allReady = false;
 		} else {
@@ -1067,6 +1148,9 @@ bool NetworkManager::IsSyncing() {
 }
 
 bool NetworkManager::AcknowledgeGhost(std::shared_ptr<GhostEntity> ghost) {
+	if (this->state == STATE::SEEKER && ghost && ghost->state == STATE::TAGGED)
+		return false;
+	
 	bool spec = ghost ? ghost->spectator : this->spectator;
 	if (!spec) return true;
 	return this->spectator && ghost_spec_see_spectators.GetBool();
@@ -1074,6 +1158,13 @@ bool NetworkManager::AcknowledgeGhost(std::shared_ptr<GhostEntity> ghost) {
 
 void NetworkManager::UpdateSyncUi() {
 	syncUi.UpdateAndPaint();
+}
+
+void NetworkManager::EndHideAndSeek() {
+	this->state = STATE::NONE;
+	this->hideAndSeekMap = "";
+	this->mustWait = false;
+	ghost_sync.SetValue(0);
 }
 
 ON_EVENT(RENDER) {
@@ -1100,7 +1191,10 @@ ON_EVENT(SESSION_START) {
 			if (networkManager.disableSyncForLoad) {
 				networkManager.disableSyncForLoad = false;
 			} else {
-				if (session->previousMap != engine->GetCurrentMapName()) {  //Don't pause if just reloading save
+				if (networkManager.mustWait ? engine->GetCurrentMapName() == networkManager.hideAndSeekMap : session->previousMap != engine->GetCurrentMapName()) {  //	Don't pause if just reloading save or not on hide and seek map
+					if (networkManager.mustWait && engine->GetCurrentMapName() == networkManager.hideAndSeekMap)
+						networkManager.mustWait = false; // wack
+
 					engine->shouldPauseForSync = true;
 					syncUi.active = true;
 					syncUi.countdownEnd = {};
@@ -1243,7 +1337,7 @@ CON_COMMAND(ghost_list, "ghost_list - list all players in the current ghost serv
 	for (size_t i = 0; i < networkManager.ghostPool.size(); ++i) {
 		auto ghost = networkManager.ghostPool[i];
 		if (!ghost->isDestroyed) {
-			console->Print("  %s (%s)%s\n", ghost->name.c_str(), ghost->currentMap.size() == 0 ? "menu" : ghost->currentMap.c_str(), ghost->spectator ? " (spectator)" : "");
+			console->Print("  %s (%s)%s%s%s\n", ghost->name.c_str(), ghost->currentMap.size() == 0 ? "menu" : ghost->currentMap.c_str(), ghost->spectator || ghost->state == STATE::TAGGED ? " (spectator)" : "", ghost->state == STATE::SEEKER ? " (seeker)" : "", ghost->state == STATE::HIDER ? " (hider)" : "");
 		}
 	}
 	networkManager.ghostPoolLock.unlock();

@@ -28,6 +28,10 @@ enum class HEADER {
 	SPEEDRUN_FINISH,
 	MODEL_CHANGE,
 	COLOR_CHANGE,
+
+	UPDATE_STATES,
+	START_HIDEANDSEEK,
+	END_HIDEANDSEEK
 };
 
 class NetworkManager {
@@ -70,6 +74,10 @@ public:
 
 	int followGhostID = -1;
 
+	STATE state;
+	std::string hideAndSeekMap;
+	bool mustWait;
+
 public:
 	NetworkManager();
 
@@ -110,6 +118,7 @@ public:
 	bool AcknowledgeGhost(std::shared_ptr<GhostEntity> ghost);
 
 	void UpdateSyncUi();
+	void EndHideAndSeek();
 };
 
 extern NetworkManager networkManager;

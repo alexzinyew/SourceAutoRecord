@@ -26,6 +26,13 @@ enum class GhostType {
 	BENDY = 4
 };
 
+enum class STATE {
+	NONE,
+	SEEKER,
+	HIDER,
+	TAGGED,
+};
+
 class GhostEntity {
 public:
 	unsigned int ID;
@@ -56,6 +63,8 @@ public:
 	bool isDestroyed;  // used by NetworkGhostPlayer for sync reasons
 
 	static void KillAllGhosts();
+
+	STATE state;
 
 public:
 	GhostEntity(unsigned int &ID, std::string &name, DataGhost &data, std::string &current_map, bool network);
