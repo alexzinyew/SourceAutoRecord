@@ -81,11 +81,11 @@ public:
 			if (ghost_sync_countdown.GetFloat() > 1) {
 				unsigned secs = (ms + 999) / 1000;  // poor man's ceil
 				int length = surface->GetFontLength(font, "%d", secs);
-				surface->DrawTxt(font, (screenWidth - length) / 2, 100, white, "%d", secs);
+				surface->DrawTxt(font, (screenWidth - length) / 2, 100, white, "%s%d", networkManager.state == STATE::SEEKER ? "You are a seeker and will be released in: " : "", secs);
 			} else {
-				float secs = (float)ms / 1000.0f + 0.049f; // poor man's ceil, but weirder
+				float secs = (float)ms / 1000.0f + 0.049f;  // poor man's ceil, but weirder
 				int length = surface->GetFontLength(font, "%.1f", secs);
-				surface->DrawTxt(font, (screenWidth - length) / 2, 100, white, "%.1f", secs);
+				surface->DrawTxt(font, (screenWidth - length) / 2, 100, white, "%s%.1f", networkManager.state == STATE::SEEKER ? "You are a seeker and will be released in: " : "", secs);
 			}
 		} else {
 			int height = surface->GetFontHeight(font);
@@ -1065,9 +1065,6 @@ void NetworkManager::UpdateColor() {
 }
 
 bool NetworkManager::AreAllGhostsAheadOrSameMap() {
-	//if (this->state != STATE::NONE && engine->GetCurrentMapName() != this->hideAndSeekMap) // sync ui will not be active 
-	//	return false;
-
 	this->ghostPoolLock.lock();
 	syncUi.ready.clear();
 	syncUi.waiting.clear();
